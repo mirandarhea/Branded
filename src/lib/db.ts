@@ -44,10 +44,21 @@ export function getDb(): Database.Database {
 /**
  * Initialize the database schema. Runs all CREATE TABLE statements.
  * Safe to call multiple times — uses IF NOT EXISTS.
+ * Also runs column migrations for existing tables.
  */
 export function initSchema(): void {
   const db = getDb();
   db.exec(SCHEMA_SQL);
+
+  // Run column migrations (ignore errors if columns already exist)
+  const migrations = [
+    "ALTER TABLE businesses ADD COLUMN custom_domain TEXT",
+    "ALTER TABLE businesses ADD COLUMN custom_domain_verified INTEGER DEFAULT 0",
+    "ALTER TABLE businesses ADD COLUMN custom_domain_verification_token TEXT",
+  ];
+  for (const sql of migrations) {
+    try { db.exec(sql); } catch { /* column already exists */ }
+  }
 }
 
 /**
@@ -72,6 +83,10 @@ export interface Business {
   primary_color: string;
   secondary_color: string;
   subscription_tier: string;
+  ai_assistant_enabled: number;
+  custom_domain: string | null;
+  custom_domain_verified: number;
+  custom_domain_verification_token: string | null;
   created_at: string;
 }
 
@@ -83,13 +98,14 @@ export interface BusinessInput {
   primary_color?: string;
   secondary_color?: string;
   subscription_tier?: string;
+  ai_assistant_enabled?: number;
 }
 
 export function createBusiness(input: BusinessInput): Business {
   const db = getDb();
   const stmt = db.prepare(`
-    INSERT INTO businesses (id, name, slug, logo_url, primary_color, secondary_color, subscription_tier)
-    VALUES (@id, @name, @slug, @logo_url, @primary_color, @secondary_color, @subscription_tier)
+    INSERT INTO businesses (id, name, slug, logo_url, primary_color, secondary_color, subscription_tier, ai_assistant_enabled)
+    VALUES (@id, @name, @slug, @logo_url, @primary_color, @secondary_color, @subscription_tier, @ai_assistant_enabled)
   `);
   stmt.run({
     id: input.id,
@@ -99,6 +115,7 @@ export function createBusiness(input: BusinessInput): Business {
     primary_color: input.primary_color ?? "#4f46e5",
     secondary_color: input.secondary_color ?? "#7c3aed",
     subscription_tier: input.subscription_tier ?? "starter",
+    ai_assistant_enabled: input.ai_assistant_enabled ?? 0,
   });
   return getBusiness(input.id)!;
 }
@@ -124,7 +141,7 @@ export function updateBusiness(id: string, updates: Partial<BusinessInput>): Bus
   const stmt = db.prepare(`
     UPDATE businesses SET name = @name, slug = @slug, logo_url = @logo_url,
       primary_color = @primary_color, secondary_color = @secondary_color,
-      subscription_tier = @subscription_tier
+      subscription_tier = @subscription_tier, ai_assistant_enabled = @ai_assistant_enabled
     WHERE id = @id
   `);
   stmt.run(merged);
@@ -141,6 +158,13 @@ export function deleteBusiness(id: string): boolean {
 export function listBusinesses(): Business[] {
   const db = getDb();
   return db.prepare("SELECT * FROM businesses ORDER BY created_at DESC").all() as Business[];
+}
+
+export function getBusinessByDomain(domain: string): Business | undefined {
+  const db = getDb();
+  return db
+    .prepare("SELECT * FROM businesses WHERE custom_domain = ? AND custom_domain_verified = 1")
+    .get(domain) as Business | undefined;
 }
 
 // ---------------------------------------------------------------------------

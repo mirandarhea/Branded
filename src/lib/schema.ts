@@ -12,6 +12,10 @@ CREATE TABLE IF NOT EXISTS businesses (
   primary_color TEXT DEFAULT '#4f46e5',
   secondary_color TEXT DEFAULT '#7c3aed',
   subscription_tier TEXT DEFAULT 'starter',
+  ai_assistant_enabled INTEGER DEFAULT 0,
+  custom_domain TEXT,
+  custom_domain_verified INTEGER DEFAULT 0,
+  custom_domain_verification_token TEXT,
   created_at TEXT DEFAULT (datetime('now'))
 );
 
