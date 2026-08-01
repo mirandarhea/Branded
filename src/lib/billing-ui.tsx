@@ -389,7 +389,7 @@ export function BillingManager({
                 {spotsRemaining > 0 ? (
                   <>
                     <span className="font-bold">Only {spotsRemaining} trial spot{spotsRemaining !== 1 ? "s" : ""} remaining</span>
-                    {" "}— first {MAX_TRIAL_SPOTS} businesses get 7 days free.
+                    {" "}— first {MAX_TRIAL_SPOTS} businesses get 7 days free. Credit card required, cancel anytime.
                   </>
                 ) : (
                   "All trial spots are taken — but you can still subscribe below."

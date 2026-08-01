@@ -188,7 +188,7 @@ function Home() {
 
               {/* Trust signal */}
               <p className="mt-6 text-xs text-gray-400">
-                No credit card required &middot; Set up in under 5 minutes
+                Free 7-day trial &middot; Credit card required &middot; Set up in under 5 minutes
               </p>
             </div>
 
@@ -201,7 +201,7 @@ function Home() {
                       🚀 Branded is live — First 10 businesses get 7 days free
                     </h2>
                     <p className="mt-1 text-sm text-amber-700">
-                      Try all features risk-free. No credit card required.
+                      Try all features risk-free for 7 days. Credit card required — you won't be charged until your trial ends.
                       Only a few trial spots left!
                     </p>
                   </div>
