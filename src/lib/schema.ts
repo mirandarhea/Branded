@@ -12,6 +12,10 @@ CREATE TABLE IF NOT EXISTS businesses (
   primary_color TEXT DEFAULT '#4f46e5',
   secondary_color TEXT DEFAULT '#7c3aed',
   subscription_tier TEXT DEFAULT 'starter',
+  ai_assistant_enabled INTEGER DEFAULT 0,
+  custom_domain TEXT,
+  custom_domain_verified INTEGER DEFAULT 0,
+  custom_domain_verification_token TEXT,
   created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -176,4 +180,10 @@ CREATE TABLE IF NOT EXISTS email_drips (
 
 CREATE INDEX IF NOT EXISTS idx_email_drips_next_send ON email_drips(next_send_at);
 CREATE INDEX IF NOT EXISTS idx_email_drips_business_id ON email_drips(business_id);
+
+-- Trial counter for first 10 businesses (7-day free trial)
+CREATE TABLE IF NOT EXISTS trial_counter (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  used_count INTEGER DEFAULT 0
+);
 `;
