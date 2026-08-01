@@ -180,4 +180,10 @@ CREATE TABLE IF NOT EXISTS email_drips (
 
 CREATE INDEX IF NOT EXISTS idx_email_drips_next_send ON email_drips(next_send_at);
 CREATE INDEX IF NOT EXISTS idx_email_drips_business_id ON email_drips(business_id);
+
+-- Trial counter for first 10 businesses (7-day free trial)
+CREATE TABLE IF NOT EXISTS trial_counter (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  used_count INTEGER DEFAULT 0
+);
 `;

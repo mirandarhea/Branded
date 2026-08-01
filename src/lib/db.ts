@@ -59,6 +59,11 @@ export function initSchema(): void {
   for (const sql of migrations) {
     try { db.exec(sql); } catch { /* column already exists */ }
   }
+
+  // Seed trial counter
+  try {
+    db.exec("INSERT OR IGNORE INTO trial_counter (id, used_count) VALUES (1, 0)");
+  } catch { /* table may already exist */ }
 }
 
 /**
@@ -764,6 +769,30 @@ export function dbUpdateDripStep(id: string, step: number, nextSendAt: string | 
     id,
   );
   return dbGetDrip(id);
+}
+
+// ---------------------------------------------------------------------------
+// Trial counter
+// ---------------------------------------------------------------------------
+
+const MAX_TRIALS = 10;
+
+export function getTrialUsedCount(): number {
+  const db = getDb();
+  const row = db.prepare("SELECT used_count FROM trial_counter WHERE id = 1").get() as
+    | { used_count: number }
+    | undefined;
+  return row?.used_count ?? 0;
+}
+
+export function isTrialAvailable(): boolean {
+  return getTrialUsedCount() < MAX_TRIALS;
+}
+
+export function incrementTrialUsed(): number {
+  const db = getDb();
+  db.prepare("UPDATE trial_counter SET used_count = used_count + 1 WHERE id = 1").run();
+  return getTrialUsedCount();
 }
 
 // ---------------------------------------------------------------------------
