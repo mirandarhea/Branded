@@ -4,66 +4,64 @@
  * Business profile, branding, and subscription info.
  * Allows editing business name, slug, description, logo, and colors.
  */
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { createServerFn } from "@tanstack/react-start";
-import { getBusiness, updateBusiness, getDb } from "~/lib/db";
-import { requireBusinessAuth } from "~/lib/auth";
-import type { Business } from "~/lib/db";
 import { TextEditor, ColorPicker, ImageUploader } from "~/lib/page-editor";
 import { BillingManager } from "~/lib/billing-ui";
 import { Toggle } from "~/lib/design/components";
 
 // ---------------------------------------------------------------------------
-// Server functions
+// Types (local — replaced createServerFn + db imports)
 // ---------------------------------------------------------------------------
 
-const loadBusiness = createServerFn({ method: "GET" })
-  .validator((data: { sessionToken: string; businessId: string }) => data)
-  .handler(async ({ data }) => {
-    const auth = requireBusinessAuth(data.sessionToken);
-    if (!auth.authorized) return { error: auth.error!, business: null as Business | null };
-    const business = getBusiness(data.businessId);
-    if (!business) return { error: "Business not found", business: null };
-    return { error: null, business };
-  });
+interface Business {
+  id: string;
+  name: string;
+  slug: string;
+  logo_url: string | null;
+  primary_color: string;
+  secondary_color: string;
+  ai_assistant_enabled: number;
+  subscription_tier: string;
+  custom_domain: string | null;
+  custom_domain_verified: number;
+  custom_domain_verification_token: string | null;
+  created_at: string;
+}
 
-const saveBusiness = createServerFn({ method: "POST" })
-  .validator((data: {
-    sessionToken: string;
-    businessId: string;
-    name: string;
-    slug: string;
-    logoUrl: string | null;
-    primaryColor: string;
-    secondaryColor: string;
-  }) => data)
-  .handler(async ({ data }) => {
-    const auth = requireBusinessAuth(data.sessionToken);
-    if (!auth.authorized) return { error: auth.error! };
-    return updateBusiness(data.businessId, {
-      name: data.name,
-      slug: data.slug,
-      logo_url: data.logoUrl,
-      primary_color: data.primaryColor,
-      secondary_color: data.secondaryColor,
-    });
-  });
+// ---------------------------------------------------------------------------
+// API helpers (replaces createServerFn — uses direct fetch to serve.js routes)
+// ---------------------------------------------------------------------------
 
-const toggleAiAssistant = createServerFn({ method: "POST" })
-  .validator((data: { sessionToken: string; businessId: string; enabled: boolean }) => data)
-  .handler(async ({ data }) => {
-    const auth = requireBusinessAuth(data.sessionToken);
-    if (!auth.authorized) return { error: auth.error! };
-    const business = getBusiness(data.businessId);
-    if (!business) return { error: "Business not found" };
-    if (business.subscription_tier !== "premium") {
-      return { error: "AI Assistant is a Premium feature. Please upgrade to use it." };
-    }
-    return updateBusiness(data.businessId, {
-      ai_assistant_enabled: data.enabled ? 1 : 0,
-    });
+async function loadBusinessApi(sessionToken: string, businessId: string) {
+  const res = await fetch('/api/dashboard/load-business', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionToken, businessId }),
   });
+  return res.json();
+}
+
+async function saveBusinessApi(data: {
+  sessionToken: string; businessId: string; name: string; slug: string;
+  logoUrl: string | null; primaryColor: string; secondaryColor: string;
+}) {
+  const res = await fetch('/api/dashboard/save-business', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  return res.json();
+}
+
+async function toggleAiApi(sessionToken: string, businessId: string, enabled: boolean) {
+  const res = await fetch('/api/dashboard/toggle-ai', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionToken, businessId, enabled }),
+  });
+  return res.json();
+}
 
 // ---------------------------------------------------------------------------
 // Route
@@ -109,9 +107,9 @@ function SettingsPage() {
   const [domainMessage, setDomainMessage] = useState<string | null>(null);
 
   // Load business on mount
-  useState(() => {
-    const sessionToken = typeof window !== "undefined" ? localStorage.getItem("sessionToken") : null;
-    const businessId = typeof window !== "undefined" ? localStorage.getItem("businessId") : null;
+  useEffect(() => {
+    const sessionToken = typeof window !== "undefined" ? localStorage.getItem("branded_session_token") : null;
+    const businessId = typeof window !== "undefined" ? localStorage.getItem("branded_business_id") : null;
 
     if (!sessionToken || !businessId) {
       setError("Please log in");
@@ -119,7 +117,7 @@ function SettingsPage() {
       return;
     }
 
-    loadBusiness({ sessionToken, businessId }).then((result) => {
+    loadBusinessApi(sessionToken, businessId).then((result) => {
       setLoading(false);
       if ("error" in result && result.error) {
         setError(result.error as string);
@@ -138,17 +136,17 @@ function SettingsPage() {
       setDomainVerified(b.custom_domain_verified === 1);
       setDomainToken(b.custom_domain_verification_token || null);
     });
-  });
+  }, []);
 
   const handleSave = async () => {
     setSaving(true);
     setSaved(false);
 
-    const sessionToken = typeof window !== "undefined" ? localStorage.getItem("sessionToken") : null;
-    const businessId = typeof window !== "undefined" ? localStorage.getItem("businessId") : null;
+    const sessionToken = typeof window !== "undefined" ? localStorage.getItem("branded_session_token") : null;
+    const businessId = typeof window !== "undefined" ? localStorage.getItem("branded_business_id") : null;
     if (!sessionToken || !businessId) return;
 
-    const result = await saveBusiness({
+    const result = await saveBusinessApi({
       sessionToken,
       businessId,
       name,
@@ -169,11 +167,11 @@ function SettingsPage() {
 
   const handleToggleAi = async (enabled: boolean) => {
     setTogglingAi(true);
-    const sessionToken = typeof window !== "undefined" ? localStorage.getItem("sessionToken") : null;
-    const businessId = typeof window !== "undefined" ? localStorage.getItem("businessId") : null;
+    const sessionToken = typeof window !== "undefined" ? localStorage.getItem("branded_session_token") : null;
+    const businessId = typeof window !== "undefined" ? localStorage.getItem("branded_business_id") : null;
     if (!sessionToken || !businessId) return;
 
-    const result = await toggleAiAssistant({ sessionToken, businessId, enabled });
+    const result = await toggleAiApi(sessionToken, businessId, enabled);
     setTogglingAi(false);
     if ("error" in result && result.error) {
       alert(result.error);
@@ -188,8 +186,8 @@ function SettingsPage() {
     setDomainError(null);
     setDomainMessage(null);
 
-    const sessionToken = typeof window !== "undefined" ? localStorage.getItem("sessionToken") : null;
-    const businessId = typeof window !== "undefined" ? localStorage.getItem("businessId") : null;
+    const sessionToken = typeof window !== "undefined" ? localStorage.getItem("branded_session_token") : null;
+    const businessId = typeof window !== "undefined" ? localStorage.getItem("branded_business_id") : null;
     if (!sessionToken || !businessId) return;
 
     const { setCustomDomain: setDomain } = await import("~/lib/server/domains");
@@ -210,8 +208,8 @@ function SettingsPage() {
     setDomainError(null);
     setDomainMessage(null);
 
-    const sessionToken = typeof window !== "undefined" ? localStorage.getItem("sessionToken") : null;
-    const businessId = typeof window !== "undefined" ? localStorage.getItem("businessId") : null;
+    const sessionToken = typeof window !== "undefined" ? localStorage.getItem("branded_session_token") : null;
+    const businessId = typeof window !== "undefined" ? localStorage.getItem("branded_business_id") : null;
     if (!sessionToken || !businessId) return;
 
     const { verifyCustomDomain: verifyDomain } = await import("~/lib/server/domains");
