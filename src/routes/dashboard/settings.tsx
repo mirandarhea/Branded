@@ -639,6 +639,7 @@ function SettingsPage() {
             currentTier={business.subscription_tier}
             businessId={business.id}
             businessName={business.name}
+            createdAt={business.created_at}
           />
 
           {/* Business info */}
