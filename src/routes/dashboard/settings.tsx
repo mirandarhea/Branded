@@ -190,8 +190,12 @@ function SettingsPage() {
     const businessId = typeof window !== "undefined" ? localStorage.getItem("branded_business_id") : null;
     if (!sessionToken || !businessId) return;
 
-    const { setCustomDomain: setDomain } = await import("~/lib/server/domains");
-    const result = await setDomain({ sessionToken, businessId, domain: customDomain.trim() });
+    const res = await fetch("/api/domains/set", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionToken, businessId, domain: customDomain.trim() }),
+    });
+    const result = await res.json();
 
     setDomainSaving(false);
     if ("error" in result && result.error) {
@@ -212,8 +216,12 @@ function SettingsPage() {
     const businessId = typeof window !== "undefined" ? localStorage.getItem("branded_business_id") : null;
     if (!sessionToken || !businessId) return;
 
-    const { verifyCustomDomain: verifyDomain } = await import("~/lib/server/domains");
-    const result = await verifyDomain({ sessionToken, businessId });
+    const res = await fetch("/api/domains/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionToken, businessId }),
+    });
+    const result = await res.json();
 
     setDomainVerifying(false);
     if ("error" in result && result.error) {
@@ -225,6 +233,25 @@ function SettingsPage() {
       } else {
         setDomainMessage((result as { message: string }).message || "Verification record not found");
       }
+    }
+  };
+
+  // Fetch domain status on mount
+  const fetchDomainStatus = async () => {
+    const sessionToken = typeof window !== "undefined" ? localStorage.getItem("branded_session_token") : null;
+    const businessId = typeof window !== "undefined" ? localStorage.getItem("branded_business_id") : null;
+    if (!sessionToken || !businessId) return;
+
+    const res = await fetch("/api/domains/status", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionToken, businessId }),
+    });
+    const result = await res.json();
+    if ("verified" in result) {
+      setDomainVerified(result.verified);
+      if (result.domain) setCustomDomain(result.domain);
+      if (result.verificationToken) setDomainToken(result.verificationToken);
     }
   };
 
