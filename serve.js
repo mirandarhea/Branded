@@ -604,6 +604,183 @@ async function handleCreateBioPage(body, res) {
 }
 
 // ---------------------------------------------------------------------------
+// Analytics API handler
+// ---------------------------------------------------------------------------
+
+async function handleAnalytics(body, res) {
+  const auth = requireAuth(body);
+  if (!auth.authorized) return sendError(res, 401, auth.error);
+
+  const { businessId, period } = body;
+  if (!businessId) return sendError(res, 400, "Missing businessId");
+
+  const now = new Date();
+  const endDate = now.toISOString().split("T")[0];
+  const days = period === "7d" ? 7 : period === "90d" ? 90 : 30;
+  const start = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+  const startDate = start.toISOString().split("T")[0];
+
+  // Try analytics queries; return stub data if tables don't exist
+  let totalPageViews = 0, uniqueVisitors = 0, signups = 0;
+  const pageViewsByDay = [];
+  const topPages = [];
+
+  try {
+    const pageRow = db.prepare(
+      "SELECT COUNT(*) as count FROM analytics_events WHERE business_id = ? AND event_type = ? AND created_at >= ? AND created_at <= ?"
+    ).get(businessId, "page_view", startDate, endDate);
+    if (pageRow) totalPageViews = pageRow.count;
+
+    const visitorRow = db.prepare(
+      "SELECT COUNT(DISTINCT visitor_id) as count FROM analytics_events WHERE business_id = ? AND created_at >= ? AND created_at <= ?"
+    ).get(businessId, startDate, endDate);
+    if (visitorRow) uniqueVisitors = visitorRow.count;
+
+    const signupRow = db.prepare(
+      "SELECT COUNT(*) as count FROM analytics_events WHERE business_id = ? AND event_type = ? AND created_at >= ? AND created_at <= ?"
+    ).get(businessId, "signup", startDate, endDate);
+    if (signupRow) signups = signupRow.count;
+  } catch {
+    // Tables don't exist yet — return zeros
+  }
+
+  const totalPagesRow = db.prepare(
+    "SELECT COUNT(*) as count FROM pages WHERE business_id = ?"
+  ).get(businessId);
+
+  sendJson(res, 200, {
+    totalPageViews,
+    uniqueVisitors,
+    signups,
+    avgPagesPerApp: totalPagesRow ? totalPagesRow.count : 0,
+    pageViewsByDay,
+    topPages,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard data API handler
+// ---------------------------------------------------------------------------
+
+async function handleLoadDashboard(body, res) {
+  const auth = requireAuth(body);
+  if (!auth.authorized) return sendError(res, 401, auth.error);
+
+  const { businessId } = body;
+  if (!businessId) return sendError(res, 400, "Missing businessId");
+
+  const biz = db.prepare(
+    "SELECT name, slug, logo_url, primary_color, secondary_color FROM businesses WHERE id = ?"
+  ).get(businessId);
+  if (!biz) return sendError(res, 404, "Business not found");
+
+  const pages = db.prepare(
+    "SELECT id, title, page_type, is_published, updated_at FROM pages WHERE business_id = ? ORDER BY sort_order ASC"
+  ).all(businessId);
+
+  sendJson(res, 200, {
+    business: {
+      name: biz.name,
+      slug: biz.slug,
+      logo_url: biz.logo_url,
+      primary_color: biz.primary_color,
+      secondary_color: biz.secondary_color,
+    },
+    pages: pages.map((p) => ({
+      id: p.id,
+      title: p.title,
+      pageType: p.page_type,
+      status: p.is_published ? "published" : "draft",
+      updated: p.updated_at,
+    })),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Pages API handlers (list, toggle, create, delete, reorder)
+// ---------------------------------------------------------------------------
+
+async function handlePagesList(body, res) {
+  const auth = requireAuth(body);
+  if (!auth.authorized) return sendError(res, 401, auth.error);
+
+  const { businessId } = body;
+  if (!businessId) return sendError(res, 400, "Missing businessId");
+
+  const pages = db.prepare(
+    "SELECT * FROM pages WHERE business_id = ? ORDER BY sort_order ASC"
+  ).all(businessId);
+
+  sendJson(res, 200, { error: null, pages });
+}
+
+async function handlePagesToggle(body, res) {
+  const auth = requireAuth(body);
+  if (!auth.authorized) return sendError(res, 401, auth.error);
+
+  const { pageId, businessId, published } = body;
+  if (!pageId) return sendError(res, 400, "Missing pageId");
+  if (!businessId) return sendError(res, 400, "Missing businessId");
+
+  db.prepare(
+    "UPDATE pages SET is_published = ? WHERE id = ? AND business_id = ?"
+  ).run(published ? 1 : 0, pageId, businessId);
+
+  sendJson(res, 200, { error: null });
+}
+
+async function handlePagesCreate(body, res) {
+  const auth = requireAuth(body);
+  if (!auth.authorized) return sendError(res, 401, auth.error);
+
+  const { businessId, pageType, title } = body;
+  if (!businessId) return sendError(res, 400, "Missing businessId");
+  if (!pageType) return sendError(res, 400, "Missing pageType");
+  if (!title) return sendError(res, 400, "Missing title");
+
+  const existing = db.prepare(
+    "SELECT COUNT(*) as count FROM pages WHERE business_id = ?"
+  ).get(businessId);
+  const sortOrder = existing ? existing.count : 0;
+
+  const id = crypto.randomUUID();
+  db.prepare(
+    "INSERT INTO pages (id, business_id, page_type, title, content_json, is_published, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  ).run(id, businessId, pageType, title, "{}", 0, sortOrder);
+
+  const page = db.prepare("SELECT * FROM pages WHERE id = ?").get(id);
+  sendJson(res, 200, { error: null, page });
+}
+
+async function handlePagesDelete(body, res) {
+  const auth = requireAuth(body);
+  if (!auth.authorized) return sendError(res, 401, auth.error);
+
+  const { pageId, businessId } = body;
+  if (!pageId) return sendError(res, 400, "Missing pageId");
+  if (!businessId) return sendError(res, 400, "Missing businessId");
+
+  db.prepare("DELETE FROM pages WHERE id = ? AND business_id = ?").run(pageId, businessId);
+  sendJson(res, 200, { error: null });
+}
+
+async function handlePagesReorder(body, res) {
+  const auth = requireAuth(body);
+  if (!auth.authorized) return sendError(res, 401, auth.error);
+
+  const { businessId, pageIds } = body;
+  if (!businessId) return sendError(res, 400, "Missing businessId");
+  if (!Array.isArray(pageIds)) return sendError(res, 400, "Missing pageIds array");
+
+  const stmt = db.prepare("UPDATE pages SET sort_order = ? WHERE id = ? AND business_id = ?");
+  pageIds.forEach((id, index) => {
+    stmt.run(index, id, businessId);
+  });
+
+  sendJson(res, 200, { success: true });
+}
+
+// ---------------------------------------------------------------------------
 // Domain API handlers
 // ---------------------------------------------------------------------------
 
@@ -837,6 +1014,13 @@ const server = http.createServer(async (req, res) => {
       if (pathname === "/api/dashboard/load-wizard") return handleLoadWizard(body, res);
       if (pathname === "/api/dashboard/update-branding") return handleUpdateBranding(body, res);
       if (pathname === "/api/dashboard/create-bio-page") return handleCreateBioPage(body, res);
+      if (pathname === "/api/dashboard/analytics") return handleAnalytics(body, res);
+      if (pathname === "/api/dashboard/load-dashboard") return handleLoadDashboard(body, res);
+      if (pathname === "/api/dashboard/pages/list") return handlePagesList(body, res);
+      if (pathname === "/api/dashboard/pages/toggle") return handlePagesToggle(body, res);
+      if (pathname === "/api/dashboard/pages/create") return handlePagesCreate(body, res);
+      if (pathname === "/api/dashboard/pages/delete") return handlePagesDelete(body, res);
+      if (pathname === "/api/dashboard/pages/reorder") return handlePagesReorder(body, res);
       if (pathname === "/api/domains/set") return handleSetDomain(body, res);
       if (pathname === "/api/domains/verify") return handleVerifyDomain(body, res);
       if (pathname === "/api/domains/status") return handleGetDomainStatus(body, res);
