@@ -780,6 +780,48 @@ async function handlePagesReorder(body, res) {
   sendJson(res, 200, { success: true });
 }
 
+async function handlePagesGet(body, res) {
+  const auth = requireAuth(body);
+  if (!auth.authorized) return sendError(res, 401, auth.error);
+
+  const { pageId, businessId } = body;
+  if (!pageId) return sendError(res, 400, "Missing pageId");
+  if (!businessId) return sendError(res, 400, "Missing businessId");
+
+  const page = db.prepare("SELECT * FROM pages WHERE id = ?").get(pageId);
+  if (!page || page.business_id !== businessId) {
+    return sendJson(res, 200, { error: "Page not found", page: null });
+  }
+
+  sendJson(res, 200, { error: null, page });
+}
+
+async function handlePagesSave(body, res) {
+  const auth = requireAuth(body);
+  if (!auth.authorized) return sendError(res, 401, auth.error);
+
+  const { pageId, businessId, title, contentJson, isPublished } = body;
+  if (!pageId) return sendError(res, 400, "Missing pageId");
+  if (!businessId) return sendError(res, 400, "Missing businessId");
+
+  const page = db.prepare("SELECT * FROM pages WHERE id = ?").get(pageId);
+  if (!page || page.business_id !== businessId) {
+    return sendError(res, 404, "Page not found");
+  }
+
+  db.prepare(
+    "UPDATE pages SET title = ?, content_json = ?, is_published = ? WHERE id = ?"
+  ).run(
+    title ?? page.title,
+    contentJson ? JSON.stringify(contentJson) : page.content_json,
+    isPublished !== undefined ? (isPublished ? 1 : 0) : page.is_published,
+    pageId
+  );
+
+  const updated = db.prepare("SELECT * FROM pages WHERE id = ?").get(pageId);
+  sendJson(res, 200, { error: null, page: updated });
+}
+
 // ---------------------------------------------------------------------------
 // Domain API handlers
 // ---------------------------------------------------------------------------
@@ -1021,6 +1063,8 @@ const server = http.createServer(async (req, res) => {
       if (pathname === "/api/dashboard/pages/create") return handlePagesCreate(body, res);
       if (pathname === "/api/dashboard/pages/delete") return handlePagesDelete(body, res);
       if (pathname === "/api/dashboard/pages/reorder") return handlePagesReorder(body, res);
+      if (pathname === "/api/dashboard/pages/get") return handlePagesGet(body, res);
+      if (pathname === "/api/dashboard/pages/save") return handlePagesSave(body, res);
       if (pathname === "/api/domains/set") return handleSetDomain(body, res);
       if (pathname === "/api/domains/verify") return handleVerifyDomain(body, res);
       if (pathname === "/api/domains/status") return handleGetDomainStatus(body, res);
