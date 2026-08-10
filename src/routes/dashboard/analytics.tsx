@@ -62,7 +62,10 @@ function AnalyticsDashboard() {
   useEffect(() => {
     const token = (() => { try { return localStorage.getItem("branded_session_token"); } catch { return null; } })();
     const bid = (() => { try { return localStorage.getItem("branded_business_id"); } catch { return null; } })();
-    if (!token || !bid) return;
+    if (!token || !bid) {
+      window.location.href = '/api/auth/login';
+      return;
+    }
     setSessionToken(token);
     setBusinessId(bid);
   }, []);

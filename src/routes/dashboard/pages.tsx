@@ -114,8 +114,7 @@ function PagesPage() {
       : null;
 
     if (!sessionToken || !businessId) {
-      setError("Please log in to manage pages");
-      setLoading(false);
+      window.location.href = '/api/auth/login';
       return;
     }
 

@@ -55,20 +55,34 @@ function DashboardOverview() {
 
   // Initialize
   useEffect(() => {
-    const token = (() => {
+    // First, check URL search params (set by server after login redirect)
+    const params = new URLSearchParams(window.location.search);
+    const urlToken = params.get("token");
+    const urlBid = params.get("businessId");
+    
+    let token = urlToken;
+    let bid = urlBid;
+
+    // Check window.__AUTH__ from SSR hydration (set by dashboard layout)
+    if (!token || !bid) {
       try {
-        return localStorage.getItem("branded_session_token");
-      } catch {
-        return null;
-      }
-    })();
-    const bid = (() => {
+        const authGlobal = (window as any).__AUTH__;
+        if (authGlobal?.token) token = authGlobal.token;
+        if (authGlobal?.businessId) bid = authGlobal.businessId;
+      } catch {}
+    }
+    
+    if (urlToken && urlBid) {
       try {
-        return localStorage.getItem("branded_business_id");
-      } catch {
-        return null;
-      }
-    })();
+        localStorage.setItem("branded_session_token", urlToken);
+        localStorage.setItem("branded_business_id", urlBid);
+      } catch {}
+      window.history.replaceState({}, "", window.location.pathname);
+    } else {
+      try { token = token || localStorage.getItem("branded_session_token"); } catch { token = null; }
+      try { bid = bid || localStorage.getItem("branded_business_id"); } catch { bid = null; }
+    }
+
     const dismissed = (() => {
       try {
         return localStorage.getItem("branded_banner_dismissed");
@@ -77,7 +91,10 @@ function DashboardOverview() {
       }
     })();
 
-    if (!token || !bid) return;
+    if (!token || !bid) {
+      window.location.href = '/api/auth/login';
+      return;
+    }
 
     setSessionToken(token);
     setBusinessId(bid);

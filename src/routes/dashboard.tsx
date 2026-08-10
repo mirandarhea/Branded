@@ -2,12 +2,42 @@ import { Outlet, Link, useLocation, createFileRoute } from "@tanstack/react-rout
 import { useState } from "react";
 
 export const Route = createFileRoute("/dashboard")({
-  loader: async () => {
+  loader: async ({ context }: { context: any }) => {
     // Opportunistic email drip processing — fire and forget
     import("~/lib/server/email-drip")
       .then(({ processPendingDrips }) => processPendingDrips())
       .catch(() => {});
-    return null;
+
+    // Extract session from cookies for SSR auth hydration
+    let authData = null;
+    try {
+      // Access the raw request from TanStack Start's server context
+      const request = (context as any)?.request;
+      if (request?.headers) {
+        const cookieHeader = request.headers.get("cookie") || "";
+        const cookies: Record<string, string> = {};
+        cookieHeader.split(";").forEach((c: string) => {
+          const idx = c.indexOf("=");
+          if (idx > 0) cookies[c.slice(0, idx).trim()] = c.slice(idx + 1).trim();
+        });
+        const token = cookies["branded_session"];
+        if (token) {
+          authData = { token };
+        }
+      }
+    } catch {}
+
+    // Also try URL params (set by login/register redirect)
+    try {
+      const url = new URL((context as any)?.request?.url || "http://localhost");
+      const token = url.searchParams.get("token");
+      const businessId = url.searchParams.get("businessId");
+      if (token && businessId) {
+        authData = { token, businessId };
+      }
+    } catch {}
+
+    return { authData };
   },
   component: DashboardLayout,
 });
@@ -68,10 +98,22 @@ function DashboardLayout() {
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  // Inject SSR auth into window.__AUTH__ for client hydration
+  const loaderData = Route.useLoaderData();
+  const authData = (loaderData as any)?.authData;
+
   const activePath = location.pathname;
 
   return (
     <div className="flex min-h-dvh bg-gray-50">
+      {/* SSR auth hydration: inject session data from cookies/URL into window.__AUTH__ */}
+      {authData ? (
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `window.__AUTH__ = ${JSON.stringify(authData)};`,
+          }}
+        />
+      ) : null}
       {/* Mobile header bar */}
       <header className="fixed inset-x-0 top-0 z-30 flex h-14 items-center justify-between border-b border-gray-200 bg-white px-4 lg:hidden">
         <button

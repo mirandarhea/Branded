@@ -246,15 +246,22 @@ async function handleRegister(body, res, req) {
 
   // Form submissions: redirect to onboarding with token in URL
   if (isFormSubmit) {
-    res.writeHead(302, { Location: `/dashboard/onboarding?token=${session.id}&businessId=${bizId}` });
+    res.writeHead(302, {
+      Location: `/dashboard/onboarding?token=${session.id}&businessId=${bizId}`,
+      "Set-Cookie": `branded_session=${session.id}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`,
+    });
     return res.end();
   }
 
-  sendJson(res, 200, {
+  res.writeHead(200, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Set-Cookie": `branded_session=${session.id}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`,
+  });
+  res.end(JSON.stringify({
     success: true,
     sessionToken: session.id,
     user: { id: ownerId, name, email, role: "business", businessId: bizId, businessName, businessSlug },
-  });
+  }));
 }
 
 async function handleLogin(body, res, req) {
@@ -283,15 +290,22 @@ async function handleLogin(body, res, req) {
     const session = createSession(owner.id, "business");
 
     if (isFormSubmit) {
-      res.writeHead(302, { Location: `/dashboard?token=${session.id}&businessId=${owner.business_id}` });
+      res.writeHead(302, {
+        Location: `/dashboard?token=${session.id}&businessId=${owner.business_id}`,
+        "Set-Cookie": `branded_session=${session.id}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`,
+      });
       return res.end();
     }
 
-    sendJson(res, 200, {
+    res.writeHead(200, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Set-Cookie": `branded_session=${session.id}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`,
+    });
+    res.end(JSON.stringify({
       success: true,
       sessionToken: session.id,
       user: { id: owner.id, name: owner.name, email: owner.email, role: "business", businessId: owner.business_id, businessName: biz?.name, businessSlug: biz?.slug },
-    });
+    }));
   } else {
     const biz = db.prepare("SELECT id, name, slug FROM businesses WHERE slug = ?").get(businessSlug);
     if (!biz) return sendError(res, 400, "Business not found");
@@ -315,7 +329,7 @@ async function handleLogout(body, res) {
   sendJson(res, 200, { success: true });
 }
 
-async function handleBillingCheckout(body, res) {
+async function handleBillingCheckout(body, res, isGetRedirect) {
   // Trial limit check (first 10 only)
   const trialCount = getTrialCount();
   if (trialCount >= MAX_TRIALS) {
@@ -358,6 +372,13 @@ async function handleBillingCheckout(body, res) {
     // Increment trial counter on successful session creation
     incrementTrial();
 
+    if (isGetRedirect) {
+      // GET request — redirect directly to Stripe
+      res.writeHead(302, { Location: session.url });
+      res.end();
+      return;
+    }
+
     sendJson(res, 200, {
       success: true,
       checkoutUrl: session.url,
@@ -367,6 +388,206 @@ async function handleBillingCheckout(body, res) {
     console.error("Checkout error:", err);
     sendError(res, 500, err.message || "Checkout failed");
   }
+}
+
+// ---------------------------------------------------------------------------
+// Checkout page (GET /checkout) — fully server-rendered, no JS required
+// ---------------------------------------------------------------------------
+
+function parseCookies(req) {
+  const header = req.headers.cookie || "";
+  const cookies = {};
+  for (const part of header.split(";")) {
+    const idx = part.indexOf("=");
+    if (idx > 0) {
+      cookies[part.slice(0, idx).trim()] = part.slice(idx + 1).trim();
+    }
+  }
+  return cookies;
+}
+
+function handleCheckoutPage(req, res) {
+  const cookies = parseCookies(req);
+  const sessionToken = cookies["branded_session"] || "";
+
+  if (!sessionToken) {
+    return renderCheckoutNoSession(res);
+  }
+
+  // Look up session + business
+  const row = db.prepare(
+    `SELECT s.id as session_id, s.user_id, s.role, s.expires_at,
+            b.id as business_id, b.name as business_name, b.slug, b.subscription_tier
+     FROM sessions s
+     JOIN businesses b ON b.id = (
+       SELECT business_id FROM business_owners WHERE id = s.user_id
+     )
+     WHERE s.id = ? AND s.expires_at > datetime('now') AND s.role = 'business'`
+  ).get(sessionToken);
+
+  if (!row) {
+    return renderCheckoutNoSession(res);
+  }
+
+  return renderCheckoutPage(res, row);
+}
+
+function renderCheckoutNoSession(res) {
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Branded — Choose Your Plan</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f9fafb; color: #111827; min-height: 100vh; }
+  .header { background: linear-gradient(135deg, #4f46e5, #7c3aed); color: #fff; padding: 32px 16px; text-align: center; }
+  .header h1 { font-size: 28px; font-weight: 700; }
+  .header p { margin-top: 8px; opacity: 0.9; font-size: 16px; }
+  .container { max-width: 480px; margin: 48px auto; padding: 0 16px; text-align: center; }
+  .card { background: #fff; border-radius: 16px; padding: 40px 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  .card h2 { font-size: 22px; margin-bottom: 12px; }
+  .card p { color: #6b7280; margin-bottom: 24px; line-height: 1.5; }
+  .btn { display: inline-block; background: linear-gradient(135deg, #4f46e5, #7c3aed); color: #fff; padding: 12px 32px; border-radius: 10px; text-decoration: none; font-weight: 600; font-size: 16px; }
+  .btn:hover { opacity: 0.9; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>🚀 Branded</h1>
+  <p>Your Business, In Their Pocket</p>
+</div>
+<div class="container">
+  <div class="card">
+    <h2>Get Started</h2>
+    <p>Create your free Branded account to choose a plan and launch your business app.</p>
+    <a href="/api/auth/register" class="btn">Create Your App →</a>
+    <p style="margin-top:16px;font-size:14px;color:#9ca3af;">Already have an account? <a href="/api/auth/login" style="color:#4f46e5;">Sign in</a></p>
+  </div>
+</div>
+</body>
+</html>`;
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+  res.end(html);
+}
+
+function renderCheckoutPage(res, row) {
+  const { business_id, business_name, subscription_tier } = row;
+
+  const plans = [
+    {
+      id: "starter",
+      name: "Starter",
+      price: "$29",
+      period: "/month",
+      features: ["5 pages", "Basic branding", "Core page templates"],
+      highlighted: false,
+    },
+    {
+      id: "pro",
+      name: "Pro",
+      price: "$79",
+      period: "/month",
+      features: ["20 pages", "Messaging & appointments", "All page templates", "Analytics dashboard"],
+      highlighted: true,
+    },
+    {
+      id: "premium",
+      name: "Premium",
+      price: "$199",
+      period: "/month",
+      features: ["Unlimited pages", "AI assistant", "Custom domain", "Priority support"],
+      highlighted: false,
+    },
+  ];
+
+  const successBase = "https://brandedapp.ctonew.app/dashboard/settings?checkout=success&plan=";
+  const cancelUrl = "https://brandedapp.ctonew.app/dashboard/settings?checkout=cancel";
+
+  const currentTier = subscription_tier || "starter";
+
+  const planCards = plans.map((plan) => {
+    const isCurrent = currentTier === plan.id;
+    const borderColor = plan.highlighted ? "#4f46e5" : isCurrent ? "#a5b4fc" : "#e5e7eb";
+    const bg = isCurrent ? "#eef2ff" : "#fff";
+    const badge = plan.highlighted
+      ? '<span style="position:absolute;top:-12px;left:50%;transform:translateX(-50%);background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:600;white-space:nowrap;">Most Popular</span>'
+      : "";
+    const button = isCurrent
+      ? `<button type="button" disabled style="width:100%;padding:12px;border-radius:10px;border:1px solid #d1d5db;background:#f3f4f6;color:#9ca3af;font-size:15px;font-weight:600;cursor:default;">Current Plan</button>`
+      : `<form method="POST" action="/api/billing/checkout" style="margin:0;">
+           <input type="hidden" name="planId" value="${plan.id}">
+           <input type="hidden" name="businessId" value="${business_id}">
+           <input type="hidden" name="successUrl" value="${successBase}${plan.id}">
+           <input type="hidden" name="cancelUrl" value="${cancelUrl}">
+           <button type="submit" style="width:100%;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff;font-size:15px;font-weight:600;cursor:pointer;">${plan.highlighted ? '🎁 Start 7-Day Free Trial' : 'Subscribe — ' + plan.price + plan.period}</button>
+         </form>`;
+
+    return `<div style="position:relative;flex:1;min-width:260px;background:${bg};border:2px solid ${borderColor};border-radius:16px;padding:${plan.highlighted ? '28px 20px 20px' : '20px'};text-align:center;">
+      ${badge}
+      <h3 style="font-size:20px;font-weight:700;margin-bottom:4px;">${plan.name}</h3>
+      <div style="margin:12px 0;">
+        <span style="font-size:36px;font-weight:800;">${plan.price}</span>
+        <span style="color:#6b7280;">${plan.period}</span>
+      </div>
+      <ul style="list-style:none;text-align:left;margin:16px 0;">
+        ${plan.features.map((f) => `<li style="padding:6px 0;font-size:14px;color:#4b5563;">✓ ${f}</li>`).join("")}
+      </ul>
+      ${button}
+    </div>`;
+  }).join("");
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Branded — Choose Your Plan</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f9fafb; color: #111827; min-height: 100vh; }
+  .header { background: linear-gradient(135deg, #4f46e5, #7c3aed); color: #fff; padding: 32px 16px; text-align: center; }
+  .header h1 { font-size: 28px; font-weight: 700; }
+  .header p { margin-top: 8px; opacity: 0.9; font-size: 16px; }
+  .container { max-width: 900px; margin: 0 auto; padding: 40px 16px; }
+  .greeting { text-align: center; margin-bottom: 32px; }
+  .greeting h2 { font-size: 24px; font-weight: 700; }
+  .greeting p { color: #6b7280; margin-top: 4px; }
+  .plans { display: flex; gap: 20px; justify-content: center; flex-wrap: wrap; align-items: flex-start; }
+  a { color: #4f46e5; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>🚀 Branded</h1>
+  <p>Your Business, In Their Pocket</p>
+</div>
+<div class="container">
+  <div class="greeting">
+    <h2>Choose Your Plan</h2>
+    <p>Hi ${escapeHtml(business_name || "there")}! Pick the plan that fits your business.</p>
+  </div>
+  <div class="plans">
+    ${planCards}
+  </div>
+  <p style="text-align:center;margin-top:32px;font-size:13px;color:#9ca3af;">
+    All plans include a 7-day free trial. Cancel anytime.
+  </p>
+</div>
+</body>
+</html>`;
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+  res.end(html);
+}
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 // ---------------------------------------------------------------------------
@@ -995,6 +1216,12 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // ── Checkout page (no JS required) ─────────────────────────────
+
+    if (req.method === "GET" && pathname === "/checkout") {
+      return handleCheckoutPage(req, res);
+    }
+
     // ── Custom domain routing ──────────────────────────────────────
 
     if (!isBrandedHost(rawHost)) {
@@ -1014,7 +1241,7 @@ const server = http.createServer(async (req, res) => {
           url.pathname = pathname;
         }
       } catch (err) {
-        console.error("Domain lookup error:", err.message);
+        // custom_domain column may not exist — silently ignore
       }
     }
 
@@ -1034,6 +1261,20 @@ const server = http.createServer(async (req, res) => {
 
     // ── API routes ─────────────────────────────────────────────────
 
+    // GET /api/billing/checkout — redirect-based checkout (works without JS)
+    if (req.method === "GET" && pathname === "/api/billing/checkout") {
+      const params = url.searchParams;
+      const planId = params.get("planId") || "";
+      const businessId = params.get("businessId") || "";
+      const successUrl = params.get("successUrl") || "";
+      const cancelUrl = params.get("cancelUrl") || "";
+      if (planId) {
+        const body = { planId, businessId, successUrl, cancelUrl };
+        return handleBillingCheckout(body, res, true);
+      }
+      return sendError(res, 400, "Missing planId parameter");
+    }
+
     // Stripe webhook needs raw body for signature verification
     if (req.method === "POST" && pathname === "/api/webhooks/stripe") {
       const chunks = [];
@@ -1043,13 +1284,19 @@ const server = http.createServer(async (req, res) => {
       return handleStripeWebhook(rawBody, sig, res);
     }
 
+    // Billing checkout — handle form-encoded (redirect) and JSON (API response)
+    if (req.method === "POST" && pathname === "/api/billing/checkout") {
+      const body = await readBody(req);
+      const ct = (req.headers["content-type"] || "").toLowerCase();
+      return handleBillingCheckout(body, res, ct.includes("application/x-www-form-urlencoded"));
+    }
+
     if (req.method === "POST" && pathname.startsWith("/api/")) {
       const body = await readJsonBody(req);
 
       if (pathname === "/api/auth/register") return handleRegister(body, res, req);
       if (pathname === "/api/auth/login") return handleLogin(body, res, req);
       if (pathname === "/api/auth/logout") return handleLogout(body, res);
-      if (pathname === "/api/billing/checkout") return handleBillingCheckout(body, res);
       if (pathname === "/api/dashboard/load-business") return handleLoadBusiness(body, res);
       if (pathname === "/api/dashboard/save-business") return handleSaveBusiness(body, res);
       if (pathname === "/api/dashboard/toggle-ai") return handleToggleAi(body, res);

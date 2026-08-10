@@ -112,8 +112,7 @@ function SettingsPage() {
     const businessId = typeof window !== "undefined" ? localStorage.getItem("branded_business_id") : null;
 
     if (!sessionToken || !businessId) {
-      setError("Please log in");
-      setLoading(false);
+      window.location.href = '/api/auth/login';
       return;
     }
 
